@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Account, AccountStore, AuthMode } from './accounts';
-import { addMetrics, ApiError, DailyEntry, emptyMetrics, jwtClaims, KeyInfo, LiteLLMClient, Metrics, UserInfoResponse } from './client';
+import { addMetrics, ApiError, DailyEntry, distValue, emptyMetrics, jwtClaims, KeyInfo, LiteLLMClient, Metrics, modelGroup, UserInfoResponse } from './client';
 import { broadcast, DashboardPanel, UsageViewProvider } from './dashboard';
 
 export type Range = 1 | 7 | 30 | 90;
@@ -34,6 +34,8 @@ export interface UsageState {
   models: string[];
   days: { date: string; metrics: Metrics }[];
   modelUsage: { name: string; metrics: Metrics }[];
+  /** Usage aggregated by model family (`Claude Sonnet 4.5`, `Codex`, …) with share per metric. */
+  modelGroups: { name: string; metrics: Metrics; spendPct: number; tokensPct: number; requestsPct: number }[];
   totals: Metrics;
   today: Metrics;
   activityUnsupported: boolean;
@@ -57,6 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('litellm.removeAccount', () => controller!.removeAccount()),
     vscode.commands.registerCommand('litellm.reauthenticate', () => controller!.reauthenticate()),
     vscode.commands.registerCommand('litellm.refresh', () => controller!.refresh()),
+    vscode.commands.registerCommand('litellm.debugState', () => controller!.debugState()),
   );
   void controller.refresh();
 }
@@ -123,6 +126,23 @@ class UsageController implements vscode.Disposable {
 
   showDashboard() {
     DashboardPanel.show(this.context.extensionUri, this);
+  }
+
+  /** Copies a scrubbed usage-state snapshot (no keys) for bug reports and quick checks. */
+  async debugState() {
+    const { userInfo, state } = { userInfo: this.state.userInfo, state: this.state };
+    const scrubbed = {
+      configured: state.configured, range: state.range, scope: state.scope,
+      activityUnsupported: state.activityUnsupported, error: state.error,
+      lastUpdated: state.lastUpdated, models: state.models,
+      days: state.days.length, modelUsage: state.modelUsage.map(mu => ({ name: mu.name, spend: mu.metrics.spend })),
+      modelGroups: state.modelGroups.map(g => ({ name: g.name, spendPct: +g.spendPct.toFixed(1) })),
+      user: userInfo?.user_info?.user_email ?? userInfo?.user_id,
+    };
+    await vscode.env.clipboard.writeText(JSON.stringify(scrubbed, null, 2));
+    void vscode.window.showInformationMessage(
+      `Usage share requires /user/daily/activity. activityUnsupported=${state.activityUnsupported}, `
+      + `modelUsage=${state.modelUsage.length}, modelGroups=${state.modelGroups.length}, error=${state.error ?? 'none'}. Details copied to clipboard.`);
   }
 
   async setRange(range: Range) {
@@ -460,6 +480,19 @@ class UsageController implements vscode.Disposable {
     this.state.days = [...byDay].map(([date, metrics]) => ({ date, metrics })).sort((a, b) => a.date.localeCompare(b.date));
     this.state.modelUsage = [...byModel].map(([name, metrics]) => ({ name, metrics }))
       .sort((a, b) => b.metrics.spend - a.metrics.spend || b.metrics.total_tokens - a.metrics.total_tokens);
+    const byGroup = new Map<string, Metrics>();
+    for (const m of this.state.modelUsage) {
+      byGroup.set(modelGroup(m.name), addMetrics(byGroup.get(modelGroup(m.name)) ?? emptyMetrics(), m.metrics));
+    }
+    const sum = (kind: 'spend' | 'tokens' | 'requests') => Math.max(
+      [...byGroup.values()].reduce((a, m) => a + distValue(m, kind), 0), 1e-9);
+    const [spendSum, tokensSum, requestsSum] = [sum('spend'), sum('tokens'), sum('requests')];
+    this.state.modelGroups = [...byGroup].map(([name, metrics]) => ({
+      name, metrics,
+      spendPct: distValue(metrics, 'spend') / spendSum * 100,
+      tokensPct: distValue(metrics, 'tokens') / tokensSum * 100,
+      requestsPct: distValue(metrics, 'requests') / requestsSum * 100,
+    })).sort((a, b) => b.spendPct - a.spendPct || b.tokensPct - a.tokensPct);
     this.state.totals = [...byDay.values()].reduce((acc, m) => addMetrics(acc, m), emptyMetrics());
     this.state.today = byDay.get(todayStr) ?? emptyMetrics();
   }
@@ -508,7 +541,7 @@ class UsageController implements vscode.Disposable {
 function emptyUsage() {
   return {
     needsReauth: false, sessionExpiresAt: undefined as string | undefined,
-    keyInfo: undefined, userInfo: undefined, models: [] as string[], days: [], modelUsage: [],
+    keyInfo: undefined, userInfo: undefined, models: [] as string[], days: [], modelUsage: [], modelGroups: [],
     totals: emptyMetrics(), today: emptyMetrics(), activityUnsupported: false,
   };
 }

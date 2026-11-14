@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+- New `LiteLLM: Debug: Copy State to Clipboard` command that shares a scrubbed usage-state snapshot for quick troubleshooting.
+
+## 0.7.0
+
+- Usage distribution: a stacked 100% bar shows what share of spend, tokens or requests goes to each model family.
+  Dated and cloud-prefixed variants are grouped automatically, e.g. all `claude-…` aliases roll up to **Claude Sonnet 4.5**
+  and `gpt-…-codex` / `codex-…` aliases to **Codex**.
+- The model table and sidebar model cards now show each model's percentage share of spend (and tokens in the full dashboard).
+
 ## 0.6.2
 
 - Use LiteLLM's new `/v2/user/info` endpoint while retaining compatibility with older proxies.

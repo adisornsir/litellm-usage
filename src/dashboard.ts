@@ -130,6 +130,13 @@ function html(nonce: string, cspSource: string, compact: boolean): string {
   .acct { padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--vscode-widget-border, #8883); margin-bottom: 6px; }
   .acct:hover { background: var(--vscode-list-hoverBackground); }
   .acct.active { border-color: var(--vscode-focusBorder); }
+  .dist { display: flex; height: 16px; border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+  .dist div { height: 100%; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 3px 12px; margin-top: 8px; }
+  .legend > div { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .pct { color: var(--vscode-descriptionForeground); margin-left: auto; padding-left: 8px; flex: none; }
+  td.pct { color: var(--vscode-descriptionForeground); text-align: right; padding-left: 8px; }
 </style>
 </head>
 <body class="${compact ? 'compact' : ''}">
@@ -137,6 +144,7 @@ function html(nonce: string, cspSource: string, compact: boolean): string {
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 let chartMetric = 'spend';
+let distMetric = 'spend';
 const compact = document.body.classList.contains('compact');
 let state;
 
@@ -145,12 +153,25 @@ const tokens = v => v >= 1e9 ? (v/1e9).toFixed(1)+'B' : v >= 1e6 ? (v/1e6).toFix
 const num = v => (v ?? 0).toLocaleString();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDate = iso => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? esc(iso) : d.toLocaleString(); };
+const pctFmt = v => v >= 99.95 ? '100%' : v >= 10 ? v.toFixed(1) + '%' : v >= 0.05 ? v.toFixed(1) + '%' : v > 0 ? '<0.1%' : '0%';
+const swatches = () => [
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-blue') || '#3794ff',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-orange') || '#d18616',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-green') || '#3fb950',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-purple') || '#b180d7',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-red') || '#f85149',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-yellow') || '#e2c08d',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-cyan') || '#39c5cf',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-pink') || '#ff7edb',
+  getComputedStyle(document.body).getPropertyValue('--vscode-charts-lime') || '#8cdcfe',
+];
 
 window.addEventListener('message', e => { if (e.data?.type === 'state') { state = e.data.state; render(); } });
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-action]'); if (!t) return;
   const a = t.dataset.action;
   if (a === 'chart') { chartMetric = t.dataset.value; render(); return; }
+  if (a === 'dist') { distMetric = t.dataset.value; render(); return; }
   const v = t.dataset.value;
   vscode.postMessage({ type: a, value: a === 'range' ? +v : v });
 });
@@ -189,6 +210,36 @@ function accountBar(s) {
     + (active ? '<button data-action="renameAccount" data-value="' + esc(active.id) + '" title="Rename account">Rename</button>'
       + '<button data-action="removeAccount" data-value="' + esc(active.id) + '" title="Remove account">Remove</button>' : '')
     + '</div>';
+}
+
+/** Stacked 100% bar showing how usage is distributed across model families. */
+function distribution(s) {
+  const msg = distMetric === 'spend' ? money : distMetric === 'requests' ? num : tokens;
+  const val = m => distMetric === 'spend' ? m.metrics.spend : distMetric === 'requests' ? m.metrics.api_requests : m.metrics.total_tokens;
+  const pct = m => distMetric === 'spend' ? m.spendPct : distMetric === 'requests' ? m.requestsPct : m.tokensPct;
+  let rows = [...s.modelGroups].sort((a, b) => pct(b) - pct(a));
+  const colors = swatches();
+  const palette = new Map(rows.map((m, i) => [m.name, colors[i % colors.length]]));
+  if (!compact && rows.length > 8) {
+    const top = rows.slice(0, 8), rest = rows.slice(8);
+    const metrics = rest.reduce((a, m) => ({
+      spend: a.spend + m.metrics.spend, total_tokens: a.total_tokens + m.metrics.total_tokens,
+      api_requests: a.api_requests + m.metrics.api_requests,
+    }), { spend: 0, total_tokens: 0, api_requests: 0 });
+    const totalPct = rest.reduce((a, m) => a + pct(m), 0);
+    rows = [...top, { name: 'Other', metrics, spendPct: 0, tokensPct: 0, requestsPct: 0, _pct: totalPct }];
+    palette.set('Other', '#888888');
+  }
+  const pctOf = m => m._pct !== undefined ? m._pct : pct(m);
+  const btn = (k, l) => '<button data-action="dist" data-value="' + k + '" class="' + (distMetric === k ? 'active' : '') + '">' + l + '</button>';
+  const bar = rows.filter(m => pctOf(m) > 0.01).map(m =>
+    '<div style="width:' + pctOf(m).toFixed(2) + '%;background:' + palette.get(m.name) + '"><title>' + esc(m.name) + ': '
+      + pctFmt(pctOf(m)) + ' (' + msg(val(m)) + ')</title></div>').join('');
+  const legend = rows.map(m =>
+    '<div><span class="swatch" style="background:' + palette.get(m.name) + '"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + esc(m.name) + '</span><span class="pct">' + pctFmt(pctOf(m)) + ' · ' + msg(val(m)) + '</span></div>').join('');
+  return '<h2 class="row">Usage share <span class="spacer"></span>' + btn('spend','Spend') + btn('tokens','Tokens') + btn('requests','Requests') + '</h2>'
+    + '<div class="card"><div class="dist">' + bar + '</div><div class="legend">' + legend + '</div></div>';
 }
 
 function render() {
@@ -246,20 +297,27 @@ function render() {
     h += '<p class="muted">This account cannot access /user/daily/activity, so daily and per-model breakdowns are unavailable.</p>';
   } else {
     h += chart(s.days);
+    h += s.modelGroups.length ? distribution(s)
+      : '<h2>Usage share</h2><p class="muted">No usage in this period. Pick a longer range to see the model distribution.</p>';
     h += '<h2>Models</h2>';
     if (!s.modelUsage.length) {
       h += '<p class="muted">No usage in this period.</p>';
     } else {
       const maxSpend = Math.max(...s.modelUsage.map(m => m.metrics.spend), 1e-9);
+      const tokSum = Math.max(s.modelUsage.reduce((a, m) => a + m.metrics.total_tokens, 0), 1e-9);
       if (compact) {
         h += s.modelUsage.map(m => '<div class="model"><div class="row"><code title="' + esc(m.name) + '">' + esc(m.name) + '</code><span>' + money(m.metrics.spend) + '</span></div>'
           + '<div class="bar"><div style="width:' + (m.metrics.spend / maxSpend * 100).toFixed(1) + '%"></div></div>'
-          + '<div class="muted">' + tokens(m.metrics.total_tokens) + ' tokens · ' + num(m.metrics.api_requests) + ' requests</div></div>').join('');
-      } else h += '<table><tr><th>Model</th><th>Spend</th><th>Tokens</th><th>Input</th><th>Output</th><th>Requests</th><th style="width:22%"></th></tr>'
-        + s.modelUsage.map(m => '<tr><td><code>' + esc(m.name) + '</code></td><td>' + money(m.metrics.spend) + '</td><td>' + tokens(m.metrics.total_tokens)
+          + '<div class="muted">' + pctFmt(m.metrics.spend / Math.max(s.totals.spend, 1e-9) * 100) + ' of spend · '
+          + tokens(m.metrics.total_tokens) + ' tokens · ' + num(m.metrics.api_requests) + ' requests</div></div>').join('');
+      } else h += '<table><tr><th>Model</th><th>Spend</th><th>Share</th><th>Tokens</th><th>Tok.%</th><th>Input</th><th>Output</th><th>Requests</th><th style="width:22%"></th></tr>'
+        + s.modelUsage.map(m => '<tr><td><code>' + esc(m.name) + '</code></td><td>' + money(m.metrics.spend)
+          + '</td><td class="pct">' + pctFmt(m.metrics.spend / Math.max(s.totals.spend, 1e-9) * 100)
+          + '</td><td>' + tokens(m.metrics.total_tokens)
+          + '</td><td class="pct">' + pctFmt(m.metrics.total_tokens / tokSum * 100)
           + '</td><td>' + tokens(m.metrics.prompt_tokens) + '</td><td>' + tokens(m.metrics.completion_tokens) + '</td><td>' + num(m.metrics.api_requests)
-          + '</td><td><div class="bar"><div style="width:' + (m.metrics.spend / maxSpend * 100).toFixed(1) + '%"></div></div></td></tr>').join('')
-        + '</table>';
+         + '</td><td><div class="bar"><div style="width:' + (m.metrics.spend / maxSpend * 100).toFixed(1) + '%"></div></div></td></tr>').join('')
+       + '</table>';
     }
   }
 

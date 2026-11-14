@@ -57,6 +57,7 @@ Click the status bar item, or run **LiteLLM: Show Usage Dashboard**, to open the
 - Switch the time range: **Today**, **7 days**, **30 days** or **90 days**.
 - Switch the scope: **All my keys** or **This key**.
 - Chart **Spend**, **Tokens** or **Requests** per day.
+- See the **usage distribution** — a stacked bar showing what share of your spend, tokens or requests goes to each model family. Dated variants are grouped automatically, e.g. all `claude-…` aliases roll up to **Claude Sonnet 4.5** and `gpt-…-codex` aliases to **Codex**.
 - Browse the model table, your keys and the models available to you.
 
 ### Status bar

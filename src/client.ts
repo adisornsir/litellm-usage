@@ -123,6 +123,63 @@ export function addMetrics(a: Metrics, b: Partial<Metrics>): Metrics {
   };
 }
 
+/** Picks the metric a usage distribution is measured by. */
+export function distValue(metrics: Partial<Metrics>, kind: 'spend' | 'tokens' | 'requests'): number {
+  if (kind === 'tokens') {
+    return metrics.total_tokens || (metrics.prompt_tokens ?? 0) + (metrics.completion_tokens ?? 0);
+  }
+  return kind === 'requests' ? (metrics.api_requests ?? 0) : (metrics.spend ?? 0);
+}
+
+const MODEL_GROUPS: [RegExp, string][] = [
+  [/^claude-opus-(\d+)[-.](\d+)(?:[-.]|$)/i, 'Claude Opus $1.$2'],
+  [/^claude-opus-(\d+)(?:[-.]|$)/i, 'Claude Opus $1'],
+  [/^claude-sonnet-(\d+)[-.](\d+)(?:[-.]|$)/i, 'Claude Sonnet $1.$2'],
+  [/^claude-sonnet-(\d+)(?:[-.]|$)/i, 'Claude Sonnet $1'],
+  [/^claude-haiku-(\d+)[-.](\d+)(?:[-.]|$)/i, 'Claude Haiku $1.$2'],
+  [/^claude-haiku-(\d+)(?:[-.]|$)/i, 'Claude Haiku $1'],
+  [/^claude-(\d+)[-.](\d+)-sonnet(?:[-.]|$)/i, 'Claude Sonnet $1.$2'],
+  [/^claude-(\d+)[-.](\d+)-opus(?:[-.]|$)/i, 'Claude Opus $1.$2'],
+  [/^claude-(\d+)[-.](\d+)-haiku(?:[-.]|$)/i, 'Claude Haiku $1.$2'],
+  [/^claude-(\d+)-sonnet(?:[-.]|$)/i, 'Claude Sonnet $1'],
+  [/^claude-(\d+)-opus(?:[-.]|$)/i, 'Claude Opus $1'],
+  [/^claude-(\d+)-haiku(?:[-.]|$)/i, 'Claude Haiku $1'],
+  [/^gpt-(\d+(?:\.\d+)?)/i, 'GPT-$1'],
+];
+
+/** Display name for a model alias (e.g. `claude-sonnet-4-5-20250929` → `Claude Sonnet 4.5`). */
+export function displayName(model: string): string {
+  return model === 'Unknown' ? model
+    : titleCase(model.replace(/[-_]+/g, ' ').replace(/(?<=\d)[.](?=\d)/g, '\0').replace(/[.]+/g, ' ').replace(/\0/g, '.').trim() || model);
+}
+
+function titleCase(s: string): string {
+  return s.replace(/\w\S*/g, w => w[0].toUpperCase() + (w.slice(1).match(/[A-Z]/) ? w.slice(1) : w.slice(1).toLowerCase()));
+}
+
+/**
+ * Groups a model alias into a readable family. Long tails such as dated variants
+ * (`claude-haiku-4-5-20251001-v1:0`) are grouped under their family so Claude and
+ * Codex variants each get a single slice in the distribution.
+ */
+export function modelGroup(model: string): string {
+  const lower = model.toLowerCase();
+  if (lower.includes('codex')) { return 'Codex'; }
+  // Strip cloud-region prefixes such as `us.anthropic.` / `eu.anthropic.` (LiteLLM Bedrock aliases).
+  const matchable = lower.replace(/^(?:[a-z]+\.)?(?:anthropic|openai|bedrock)\./, '');
+  for (const [re, label] of MODEL_GROUPS) {
+    const m = re.exec(matchable);
+    if (m) {
+      let out = label;
+      m.slice(1).forEach((g, i) => { out = out.replace('$' + (i + 1), g); });
+      // Grab the short suffix right after the version too, e.g. `gpt-4o` → `GPT-4o`, `gpt-5-mini` → `GPT-5 mini`.
+      const tail = matchable.slice(m.index + m[0].length).replace(/^[-.+/\s]+/, '').match(/^\w+/);
+      return tail && !/^\d/.test(tail[0]) ? out + (out.endsWith(tail[0]) || tail[0].length === 1 ? '' : ' ') + tail[0] : out;
+    }
+  }
+  return displayName(model);
+}
+
 export class LiteLLMClient {
   constructor(
     private readonly base: URL,

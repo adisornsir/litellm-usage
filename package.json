@@ -2,7 +2,7 @@
   "name": "litellm-usage",
   "displayName": "LiteLLM Usage",
   "description": "Track your LiteLLM proxy spend, token and model usage from VS Code — sign in with SSO, a virtual key or username/password. No admin account required.",
-  "version": "0.6.2",
+  "version": "0.7.1",
   "publisher": "mesutpiskin",
   "author": {
     "name": "Mesut Pişkin",
@@ -88,6 +88,12 @@
         "title": "Refresh",
         "category": "LiteLLM",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "litellm.debugState",
+        "title": "Debug: Copy State to Clipboard",
+        "category": "LiteLLM",
+        "icon": "$(bug)"
       }
     ],
     "viewsContainers": {
