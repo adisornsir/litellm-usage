@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2
+
+- Fix leaked proxy-wide usage for accounts signed in with another member's virtual key (a common
+  admin setup): daily activity is now always scoped to the key, so "Spend" matches the user instead
+  of summing every user on the proxy.
+- Fix the budget shown for such accounts: the signed-in user's own budget now wins over the cap
+  attached to the key (e.g. $1.92 / $1.00 correctly becomes $1.92 / $5.00).
+
 ## 0.7.1
 
 - New `LiteLLM: Debug: Copy State to Clipboard` command that shares a scrubbed usage-state snapshot for quick troubleshooting.

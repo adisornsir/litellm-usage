@@ -393,7 +393,12 @@ class UsageController implements vscode.Disposable {
         : Promise.resolve(undefined);
 
       const [start, end] = dateBounds(this.state.range);
-      const activityP = client.dailyActivity(start, end, this.state.scope === 'key' ? info.token : undefined)
+      // The activity route reports usage for the key's *owning user*. An account signed in with
+      // someone else's key (a common admin setup) would otherwise see the whole proxy's spend,
+      // so we always scope to the key when one is available and only fall back to the
+      // user-wide view for SSO sessions (which authenticate as the user, not a virtual key).
+      const activityP = client.dailyActivity(start, end,
+        info.token && (!sso || this.state.scope === 'key') ? info.token : undefined)
         .then(entries => ({ entries, unsupported: false }), (e: unknown) => {
           // Virtual keys commonly have access to /key/info and /v2/user/info but not the
           // analytics route. Preserve their total spend/budget instead of failing refresh.
@@ -412,7 +417,7 @@ class UsageController implements vscode.Disposable {
       this.state.activityUnsupported = unsupported;
       this.aggregate(entries, end);
       this.updateSummary(account.id, {
-        spend: userInfo?.user_info?.spend ?? info.spend, maxBudget: info.max_budget ?? userInfo?.user_info?.max_budget,
+        spend: userInfo?.user_info?.spend ?? info.spend, maxBudget: userInfo?.user_info?.max_budget ?? info.max_budget,
         error: undefined,
       });
       const exp = sso ? jwtClaims(key)?.exp : undefined;
@@ -453,7 +458,7 @@ class UsageController implements vscode.Disposable {
           : undefined;
         if (gen === this.generation) {
           this.updateSummary(a.id, {
-            spend: user?.user_info?.spend ?? info.spend, maxBudget: info.max_budget ?? user?.user_info?.max_budget,
+            spend: user?.user_info?.spend ?? info.spend, maxBudget: user?.user_info?.max_budget ?? info.max_budget,
             error: undefined,
           });
         }
@@ -522,7 +527,7 @@ class UsageController implements vscode.Disposable {
       if (s.error) { tip.appendMarkdown(`$(warning) ${s.error}\n\n`); }
       tip.appendMarkdown(`Today: **${money(s.today.spend)}** · ${tokens(s.today.total_tokens)} tokens · ${s.today.api_requests} requests\n\n`);
       tip.appendMarkdown(`Total spend: **${money(s.userInfo?.user_info?.spend ?? s.keyInfo?.spend ?? 0)}**`);
-      const budget = s.keyInfo?.max_budget ?? s.userInfo?.user_info?.max_budget;
+      const budget = s.userInfo?.user_info?.max_budget ?? s.keyInfo?.max_budget;
       if (budget) { tip.appendMarkdown(` / ${money(budget)}`); }
       if (s.accounts.length > 1) {
         tip.appendMarkdown('\n\n---\n\n');

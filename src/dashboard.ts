@@ -257,7 +257,8 @@ function render() {
   root.classList.remove('muted');
   const ui = s.userInfo?.user_info, ki = s.keyInfo ?? {};
   const spend = ui?.spend ?? ki.spend ?? 0;
-  const budget = ki.max_budget ?? ui?.max_budget;
+  // The signed-in user's own budget wins: a virtual key can carry someone else's (e.g. an admin's) cap.
+  const budget = ui?.max_budget ?? ki.max_budget;
   const reset = ki.budget_reset_at ?? ui?.budget_reset_at;
   const t = s.totals;
   const rangeBtn = (v, l) => '<button data-action="range" data-value="' + v + '" class="' + (s.range === v ? 'active' : '') + '">' + l + '</button>';
