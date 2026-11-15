@@ -17,12 +17,22 @@ export interface KeyInfo {
   key_alias?: string;
   key_name?: string;
   spend?: number;
+  total_spend?: number;
   max_budget?: number | null;
   budget_reset_at?: string | null;
   user_id?: string | null;
   team_id?: string | null;
   tpm_limit?: number | null;
   rpm_limit?: number | null;
+  models?: string[];
+  model_spend?: Record<string, number>;
+}
+
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
 }
 
 export interface UserKey {
@@ -145,6 +155,7 @@ const MODEL_GROUPS: [RegExp, string][] = [
   [/^claude-(\d+)-opus(?:[-.]|$)/i, 'Claude Opus $1'],
   [/^claude-(\d+)-haiku(?:[-.]|$)/i, 'Claude Haiku $1'],
   [/^gpt-(\d+(?:\.\d+)?)/i, 'GPT-$1'],
+  [/^glm-(\d+(?:\.\d+)?)/i, 'GLM $1'],
 ];
 
 /** Display name for a model alias (e.g. `claude-sonnet-4-5-20250929` → `Claude Sonnet 4.5`). */
@@ -166,7 +177,7 @@ export function modelGroup(model: string): string {
   const lower = model.toLowerCase();
   if (lower.includes('codex')) { return 'Codex'; }
   // Strip cloud-region prefixes such as `us.anthropic.` / `eu.anthropic.` (LiteLLM Bedrock aliases).
-  const matchable = lower.replace(/^(?:[a-z]+\.)?(?:anthropic|openai|bedrock)\./, '');
+  const matchable = lower.replace(/^(?:[a-z]+\.)?(?:anthropic|openai|bedrock)\./, '').replace(/^fw-/, '');
   for (const [re, label] of MODEL_GROUPS) {
     const m = re.exec(matchable);
     if (m) {
@@ -222,6 +233,25 @@ export class LiteLLMClient {
   async models(): Promise<string[]> {
     const res = await this.get<{ data: { id: string }[] }>('v1/models');
     return res.data.map(m => m.id).sort();
+  }
+
+  async modelPricing(): Promise<Record<string, ModelPrice>> {
+    const res = await this.get<{
+      data?: { model_name?: string; litellm_params?: Record<string, any>; model_info?: Record<string, any> }[];
+    }>('model/info');
+    const out: Record<string, ModelPrice> = {};
+    for (const item of res.data ?? []) {
+      const name = item.model_name?.trim();
+      if (!name) { continue; }
+      const p = item.litellm_params ?? {};
+      const mi = item.model_info ?? {};
+      const input = Number(p.input_cost_per_token ?? mi.input_cost_per_token ?? 0) || 0;
+      const output = Number(p.output_cost_per_token ?? mi.output_cost_per_token ?? 0) || 0;
+      const cacheRead = Number(p.cache_read_input_token_cost ?? mi.cache_read_input_token_cost ?? input * 0.1) || 0;
+      const cacheWrite = Number(p.cache_creation_input_token_cost ?? mi.cache_creation_input_token_cost ?? input) || 0;
+      out[name.toLowerCase()] = { input, output, cacheRead, cacheWrite };
+    }
+    return out;
   }
 
   async dailyActivity(start: string, end: string, apiKeyHash?: string): Promise<DailyEntry[]> {

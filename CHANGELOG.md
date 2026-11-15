@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.4
+
+- Recover daily and per-model usage from local Claude Code (`~/.claude-corp`, `~/.claude`) and
+  Codex CLI (`~/.codex-corp`, `~/.codex`) session logs priced via `/model/info` when a proxy blocks
+  virtual keys from calling `/user/daily/activity`.
+- Automatically discover companion Claude and Codex virtual keys (`~/.claude-corp/key`,
+  `~/.codex-corp/key`) for the same LiteLLM user so both Claude and Codex models, pricing and
+  per-key budgets appear together under a single account.
+
 ## 0.7.3
 
 - Fix the "This account cannot access /user/daily/activity" regression on proxies that reject a

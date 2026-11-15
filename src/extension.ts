@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { Account, AccountStore, AuthMode } from './accounts';
-import { addMetrics, ApiError, DailyEntry, distValue, emptyMetrics, jwtClaims, KeyInfo, LiteLLMClient, Metrics, modelGroup, UserInfoResponse } from './client';
+import { addMetrics, ApiError, DailyEntry, distValue, emptyMetrics, jwtClaims, KeyInfo, LiteLLMClient, Metrics, modelGroup, ModelPrice, UserInfoResponse } from './client';
 import { broadcast, DashboardPanel, UsageViewProvider } from './dashboard';
+import { discoverCompanionKeys, readLocalActivity } from './localLogs';
 
 export type Range = 1 | 7 | 30 | 90;
 export type Scope = 'user' | 'key';
@@ -381,10 +382,30 @@ class UsageController implements vscode.Disposable {
       // SSO session tokens are short-lived per-session credentials, not virtual keys, so /key/info
       // does not describe them; usage and budget come from the user instead.
       const info: KeyInfo = sso ? { user_id: account.userId ?? jwtClaims(key)?.user_id } : (await client.keyInfo()).info;
+      const base = LiteLLMClient.normalize(account.baseUrl);
+      const isLocalMock = !base || base.hostname === 'localhost' || base.hostname === '127.0.0.1';
+
+      // Corporate setups (e.g. separate Claude and Codex wrappers on the same LiteLLM proxy)
+      // often provision a second virtual key for the same user. Discover companion keys so
+      // their models, pricing and per-key spend are combined seamlessly.
+      const companionClients: { client: LiteLLMClient; info: KeyInfo }[] = [];
+      if (!sso && !isLocalMock && base) {
+        const extraKeys = discoverCompanionKeys(key);
+        const verified = await Promise.all(extraKeys.map(async k => {
+          const c = new LiteLLMClient(base, k, this.insecure);
+          const ki = await c.keyInfo().then(r => r.info, () => undefined);
+          return ki && (!info.user_id || !ki.user_id || ki.user_id === info.user_id) ? { client: c, info: ki } : undefined;
+        }));
+        for (const v of verified) {
+          if (v) { companionClients.push(v); }
+        }
+      }
+
       const modelsP = client.models().catch(e => {
         if (sso && e instanceof ApiError && e.unauthorized) { throw e; }
         return this.state.models;
       });
+      const companionModelsP = Promise.all(companionClients.map(c => c.client.models().catch(() => c.info.models ?? [])));
       const userP = info.user_id
         ? client.userInfo(info.user_id).catch(e => {
           if (sso && e instanceof ApiError && e.unauthorized) { throw e; }
@@ -420,14 +441,49 @@ class UsageController implements vscode.Disposable {
           return unsupportedIfKnown(e);
         });
       // Awaited together so a failure in one request never leaves another rejection unhandled.
-      const [models, userInfo, { entries, unsupported }] = await Promise.all([modelsP, userP, activityP]);
+      const [primaryModels, companionModels, userInfo, activityRes] = await Promise.all([
+        modelsP, companionModelsP, userP, activityP,
+      ]);
       if (gen !== this.generation) { return; }
+
+      let { entries, unsupported } = activityRes;
+      if (unsupported && !isLocalMock) {
+        const pricingList = await Promise.all([
+          client.modelPricing().catch(() => ({} as Record<string, ModelPrice>)),
+          ...companionClients.map(c => c.client.modelPricing().catch(() => ({} as Record<string, ModelPrice>))),
+        ]);
+        const pricing: Record<string, ModelPrice> = Object.assign({}, ...pricingList);
+        const localEntries = readLocalActivity(start, end, pricing);
+        if (localEntries.length) {
+          entries = localEntries;
+          unsupported = false;
+        }
+      }
+
+      const allModels = new Set<string>([
+        ...primaryModels,
+        ...(info.models ?? []),
+        ...companionModels.flat(),
+        ...companionClients.flatMap(c => c.info.models ?? []),
+      ]);
+      if (userInfo && !userInfo.keys?.length && companionClients.length) {
+        userInfo.keys = [info, ...companionClients.map(c => c.info)].map(k => ({
+          token: k.token,
+          key_alias: k.key_alias ?? null,
+          key_name: k.key_name ?? null,
+          spend: k.spend,
+          max_budget: k.max_budget ?? null,
+        }));
+      }
 
       this.state.keyInfo = info;
       this.state.userInfo = userInfo;
-      this.state.models = models;
+      this.state.models = [...allModels].sort();
       this.state.activityUnsupported = unsupported;
       this.aggregate(entries, end);
+      if (unsupported && !entries.length) {
+        this.state.totals.spend = userInfo?.user_info?.spend ?? info.spend ?? 0;
+      }
       this.updateSummary(account.id, {
         spend: userInfo?.user_info?.spend ?? info.spend, maxBudget: userInfo?.user_info?.max_budget ?? info.max_budget,
         error: undefined,
