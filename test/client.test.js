@@ -89,3 +89,26 @@ test('surfaces unauthorized errors', async () => {
   await assert.rejects(new LiteLLMClient(base).login('dev', 'wrong'), e => e instanceof ApiError && e.status === 401);
   await assert.rejects(new LiteLLMClient(base, 'sk-bad').keyInfo(), e => e instanceof ApiError && e.unauthorized);
 });
+
+// The controller-side scoped→unscoped retry lives in extension.ts; this pins the client's part:
+// dailyActivity forwards the key filter and reports proxy rejection, so the controller can fall back.
+test('dailyActivity forwards the api_key hash and rejects unauthorized like any other call', async () => {
+  const seen = [];
+  const picky = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    seen.push(url.search);
+    res.writeHead(url.search.includes('api_key') ? 403 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.search.includes('api_key') ? { detail: { error: 'restricted' } } : { results: [], metadata: { has_more: false } }));
+  });
+  await new Promise(r => picky.listen(0, r));
+  try {
+    const client = new LiteLLMClient(LiteLLMClient.normalize(`http://localhost:${picky.address().port}`), 'sk-picky');
+    await assert.rejects(client.dailyActivity('2026-01-01', '2026-01-02', 'deadbeef'),
+      e => e instanceof ApiError && e.unauthorized);
+    const ok = await client.dailyActivity('2026-01-01', '2026-01-02');
+    assert.deepEqual(ok, []);
+    assert.deepEqual(seen.map(s => s.includes('api_key=deadbeef')), [true, false]);
+  } finally {
+    picky.close();
+  }
+});

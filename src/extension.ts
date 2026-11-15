@@ -397,15 +397,27 @@ class UsageController implements vscode.Disposable {
       // someone else's key (a common admin setup) would otherwise see the whole proxy's spend,
       // so we always scope to the key when one is available and only fall back to the
       // user-wide view for SSO sessions (which authenticate as the user, not a virtual key).
-      const activityP = client.dailyActivity(start, end,
-        info.token && (!sso || this.state.scope === 'key') ? info.token : undefined)
-        .then(entries => ({ entries, unsupported: false }), (e: unknown) => {
-          // Virtual keys commonly have access to /key/info and /v2/user/info but not the
-          // analytics route. Preserve their total spend/budget instead of failing refresh.
-          if (e instanceof ApiError && (e.status === 404 || (!sso && e.unauthorized))) {
-            return { entries: [] as DailyEntry[], unsupported: true };
+      const keyHash = info.token && (!sso || this.state.scope === 'key') ? info.token : undefined;
+      const unsupportedIfKnown = (e: unknown): { entries: DailyEntry[]; unsupported: boolean } => {
+        // Virtual keys commonly have access to /key/info and /v2/user/info but not the
+        // analytics route. Preserve their total spend/budget instead of failing refresh.
+        if (e instanceof ApiError && (e.status === 404 || (!sso && e.unauthorized))) {
+          return { entries: [], unsupported: true };
+        }
+        throw e;
+      };
+      const activityP = client.dailyActivity(start, end, keyHash)
+        .then(entries => ({ entries, unsupported: false }))
+        .catch(e => {
+          // Some proxies reject a key-scoped request (unknown hash, route restricted to the
+          // unscoped form, …). Retry without the filter so the breakdowns stay available;
+          // a failure there is handled exactly like a failure of the original request.
+          if (keyHash && e instanceof ApiError && (e.status === 404 || e.status === 400 || e.unauthorized)) {
+            return client.dailyActivity(start, end)
+              .then(entries => ({ entries, unsupported: false }))
+              .catch(unsupportedIfKnown);
           }
-          throw e;
+          return unsupportedIfKnown(e);
         });
       // Awaited together so a failure in one request never leaves another rejection unhandled.
       const [models, userInfo, { entries, unsupported }] = await Promise.all([modelsP, userP, activityP]);

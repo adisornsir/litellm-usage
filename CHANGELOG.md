@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3
+
+- Fix the "This account cannot access /user/daily/activity" regression on proxies that reject a
+  key-scoped activity request (unknown hash or a route restricted to the unscoped form): the
+  request is retried without the key filter before falling back to the budget-only view.
+
 ## 0.7.2
 
 - Fix leaked proxy-wide usage for accounts signed in with another member's virtual key (a common
