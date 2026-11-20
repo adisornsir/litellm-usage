@@ -281,6 +281,22 @@ function render() {
   if (reset) h += '<div class="muted" style="margin-top:6px">Resets: ' + fmtDate(reset) + '</div>';
   if (s.sessionExpiresAt) h += '<div class="muted" style="margin-top:6px">SSO session expires: ' + fmtDate(s.sessionExpiresAt) + '</div>';
   h += '</div>';
+  h += '<h2>Daily / Monthly budget (this key)</h2><div class="grid">';
+  if (!s.budgetWindows?.length) h += '<div class="card muted">No key budget windows configured. Overall budget remains above.</div>';
+  for (const w of s.budgetWindows ?? []) {
+    const title=w.period==='daily'?'Daily':w.period==='monthly'?'Monthly':w.duration;
+    const spent=w.spent===undefined?'N/A':money(w.spent);
+    const remain=w.remaining===undefined?'N/A':money(w.remaining);
+    const percent=w.percentage===undefined?' · Usage counter unavailable':' · '+w.percentage.toFixed(1)+'% used';
+    const alert=w.spent===undefined?'':w.spent>=w.limit?' · LIMIT REACHED':w.percentage>=90?' · 90% warning':w.percentage>=80?' · 80% warning':'';
+    h += '<div class="card"><div class="muted">'+esc(title)+' limit ('+esc(w.duration)+')</div>'
+      +'<div class="big">'+spent+' <span class="muted">/ '+money(w.limit)+'</span></div>'
+      +'<div class="muted">Remaining: '+remain+percent+alert+'</div>';
+    if(w.percentage!==undefined) h+='<div class="bar" style="margin-top:8px"><div style="width:'+w.percentage.toFixed(1)+'%"></div></div>';
+    if(w.resetAt) h+='<div class="muted" style="margin-top:6px">Resets: '+fmtDate(w.resetAt)+'</div>';
+    h+='</div>';
+  }
+  h += '</div>';
 
   h += '<h2 class="row">Usage <span class="spacer"></span>' + (compact
       ? '</h2><div class="row">' + rangeBtn(1,'1d') + rangeBtn(7,'7d') + rangeBtn(30,'30d') + rangeBtn(90,'90d')

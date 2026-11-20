@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Account, AccountStore, AuthMode } from './accounts';
 import { addMetrics, ApiError, DailyEntry, distValue, emptyMetrics, jwtClaims, KeyInfo, LiteLLMClient, Metrics, modelGroup, ModelPrice, UserInfoResponse } from './client';
 import { broadcast, DashboardPanel, UsageViewProvider } from './dashboard';
+import { BudgetWindow, budgetWindowsFromKey, windowStatus } from './budgetWindows';
 import { discoverCompanionKeys, readLocalActivity } from './localLogs';
 
 export type Range = 1 | 7 | 30 | 90;
@@ -31,6 +32,7 @@ export interface UsageState {
   range: Range;
   scope: Scope;
   keyInfo?: KeyInfo;
+  budgetWindows: BudgetWindow[];
   userInfo?: UserInfoResponse;
   models: string[];
   days: { date: string; metrics: Metrics }[];
@@ -374,6 +376,7 @@ class UsageController implements vscode.Disposable {
     }));
     if (!account || !key || !client) { this.render(); return; }
 
+    this.state.budgetWindows = [];
     void this.refreshSummaries(gen);
     this.state.loading = true;
     this.render();
@@ -477,6 +480,7 @@ class UsageController implements vscode.Disposable {
       }
 
       this.state.keyInfo = info;
+      this.state.budgetWindows = budgetWindowsFromKey(info);
       this.state.userInfo = userInfo;
       this.state.models = [...allModels].sort();
       this.state.activityUnsupported = unsupported;
@@ -581,10 +585,17 @@ class UsageController implements vscode.Disposable {
       item.command = s.accounts.length > 1 ? 'litellm.switchAccount' : 'litellm.addAccount';
     } else {
       item.command = s.needsReauth ? 'litellm.reauthenticate' : 'litellm.showDashboard';
-      const icon = s.loading ? '$(sync~spin)' : s.error ? '$(warning)' : '$(pulse)';
+      const dailyWindow = s.budgetWindows.find(w => w.period === 'daily');
+      const status = dailyWindow ? windowStatus(dailyWindow) : 'unknown';
+      const icon = s.loading ? '$(sync~spin)' : s.error || ['warning','critical','exhausted'].includes(status) ? '$(warning)' : '$(pulse)';
       let text = '';
       switch (this.config.get<string>('statusBar', 'todaySpend')) {
-        case 'todaySpend': text = money(s.today.spend); break;
+        case 'todaySpend': {
+          const spent = s.activityUnsupported ? dailyWindow?.spent : s.today.spend;
+          text = spent === undefined ? 'N/A' : money(spent);
+          break;
+        }
+        case 'dailyBudget': text = dailyWindow?.spent === undefined ? 'Daily N/A' : money(dailyWindow.spent); break;
         case 'todayTokens': text = tokens(s.today.total_tokens); break;
         case 'totalSpend': text = money(s.userInfo?.user_info?.spend ?? s.keyInfo?.spend ?? 0); break;
       }
@@ -597,6 +608,16 @@ class UsageController implements vscode.Disposable {
       tip.appendMarkdown(`Total spend: **${money(s.userInfo?.user_info?.spend ?? s.keyInfo?.spend ?? 0)}**`);
       const budget = s.userInfo?.user_info?.max_budget ?? s.keyInfo?.max_budget;
       if (budget) { tip.appendMarkdown(` / ${money(budget)}`); }
+      for (const w of s.budgetWindows) {
+        const label = w.period === 'daily' ? 'Daily' : w.period === 'monthly' ? 'Monthly' : w.duration;
+        const spent = w.spent === undefined ? 'N/A' : money(w.spent);
+        const remaining = w.remaining === undefined ? 'N/A' : money(w.remaining);
+        const reset = w.resetAt ? ' · resets ' + new Date(w.resetAt).toLocaleString() : '';
+        const status = windowStatus(w);
+        const alert = ['warning','critical','exhausted'].includes(status) ? '$(warning) ' : '';
+        tip.appendMarkdown('\n\n' + alert + '**' + label + ' key budget:** ' + spent + ' / ' + money(w.limit)
+          + ' · remaining ' + remaining + reset);
+      }
       if (s.accounts.length > 1) {
         tip.appendMarkdown('\n\n---\n\n');
         for (const a of s.accounts) {
@@ -614,7 +635,7 @@ class UsageController implements vscode.Disposable {
 function emptyUsage() {
   return {
     needsReauth: false, sessionExpiresAt: undefined as string | undefined,
-    keyInfo: undefined, userInfo: undefined, models: [] as string[], days: [], modelUsage: [], modelGroups: [],
+    keyInfo: undefined, userInfo: undefined, budgetWindows: [] as BudgetWindow[], models: [] as string[], days: [], modelUsage: [], modelGroups: [],
     totals: emptyMetrics(), today: emptyMetrics(), activityUnsupported: false,
   };
 }

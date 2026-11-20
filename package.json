@@ -1,9 +1,9 @@
 {
   "name": "litellm-usage",
-  "displayName": "LiteLLM Usage",
+  "displayName": "Gosoft LiteLLM Usage (Daily & Monthly)",
   "description": "Track your LiteLLM proxy spend, token and model usage from VS Code — sign in with SSO, a virtual key or username/password. No admin account required.",
-  "version": "0.7.4",
-  "publisher": "mesutpiskin",
+  "version": "0.7.5",
+  "publisher": "adisornsir",
   "author": {
     "name": "Mesut Pişkin",
     "email": "mesutpiskin@outlook.com"
@@ -163,12 +163,14 @@
             "todaySpend",
             "todayTokens",
             "totalSpend",
+            "dailyBudget",
             "icon"
           ],
           "enumDescriptions": [
             "Today's spend",
             "Today's tokens",
             "Total spend",
+            "Daily key budget usage",
             "Icon only"
           ],
           "default": "todaySpend",
