@@ -139,7 +139,7 @@ test('adds an API key account and switches to it', async () => {
   assert.ok(calls.includes('GET /key/info'));
   assert.ok(calls.includes('GET /v2/user/info'));
   assert.equal(statusItem.command, 'litellm.showDashboard', 'a forbidden activity route must not break virtual-key usage');
-  assert.equal(statusItem.text, '$(pulse) $0');
+  assert.equal(statusItem.text, '$(pulse) N/A');
   assert.match(statusItem.tooltip.value, /\$7\.50/);
   assert.match(statusItem.tooltip.value, /ci @ .*\n\n.*dev@example\.com/s, 'tooltip lists both accounts');
 });

@@ -12,7 +12,16 @@ export interface Metrics {
   failed_requests: number;
 }
 
+export interface KeyBudgetLimit {
+ budget_duration:string; max_budget:number; reset_at?:string|null; budget_reset_at?:string|null;
+}
+export interface KeyBudgetUsage {
+ current_spend?:number|null; reset_at?:string|null; budget_reset_at?:string|null;
+}
 export interface KeyInfo {
+ budget_duration?:string|null;
+ budget_limits?:KeyBudgetLimit[]|null;
+ budget_limits_usage?:Record<string,KeyBudgetUsage>|null;
   token?: string;
   key_alias?: string;
   key_name?: string;

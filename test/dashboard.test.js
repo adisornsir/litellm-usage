@@ -89,6 +89,18 @@ test('renders the stacked usage share bar with Claude and Codex slices', () => {
   assert.match(out, /<td class="pct">40\.0%/, 'per-model share column');
 });
 
+test('daily and monthly windows appear in webview', () => {
+  const windows=[
+    {duration:'24h',period:'daily',limit:20,spent:15,remaining:5,percentage:75,resetAt:'2026-11-21T00:00:00Z'},
+    {duration:'30d',period:'monthly',limit:100,spent:51,remaining:49,percentage:51}
+  ];
+  messageHandler({data:{type:'state',state:{...state,budgetWindows:windows}}});
+  assert.match(root.innerHTML,/Daily limit \(24h\)/);
+  assert.match(root.innerHTML,/Monthly limit \(30d\)/);
+  assert.match(root.innerHTML,/Remaining: \$5/);
+  assert.match(root.innerHTML,/75\.0% used/);
+  messageHandler({data:{type:'state',state}});
+});
 test('models table carries the full Claude + Codex aliases with token shares', () => {
   messageHandler({ data: { type: 'state', state } });
   const out = root.innerHTML;
